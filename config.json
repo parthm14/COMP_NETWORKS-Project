@@ -1,0 +1,57 @@
+{
+  "_comment": "BEFORE deploying to 3 machines, replace 127.0.0.1 with the real IPs.",
+
+  "turbine": {
+    "host": "127.0.0.1",
+    "ports": {
+      "yaw_control":    7001,
+      "pitch_control":  7002,
+      "sensor_stream":  7003,
+      "telemetry":      7004,
+      "video_stream":   7005
+    }
+  },
+
+  "satellite": {
+    "host": "127.0.0.1",
+    "ports": {
+      "uplink_from_station": 8001,
+      "uplink_from_turbine": 8002
+    }
+  },
+
+  "station": {
+    "host": "127.0.0.1",
+    "ports": {
+      "data_receiver": 9001
+    }
+  },
+
+  "channel": {
+    "_comment": "LEO channel simulation parameters",
+    "one_way_delay_ms":      20,
+    "jitter_ms":             10,
+    "packet_loss_rate":      0.02,
+    "bandwidth_bps":         1000000,
+    "orbital_period_s":      5700,
+    "visibility_window_s":   600,
+    "bad_weather_loss_rate": 0.15
+  },
+
+  "protocol": {
+    "ack_timeout_s":      2.0,
+    "max_retries":        5,
+    "heartbeat_interval": 10
+  },
+
+  "ui": {
+    "_comment": "Streamlit UI bridge (runs on station; uses local UDP)",
+    "enabled": true,
+    "host": "127.0.0.1",
+    "state_port": 9102,
+    "command_port": 9103,
+    "state_interval_s": 1.0,
+    "satellite_status_port": 9104,
+    "satellite_interval_s": 1.0
+  }
+}
