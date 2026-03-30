@@ -98,6 +98,10 @@ class StationState:
         with self._lock:
             self.alarms.clear()
 
+    def clear_alarm_code(self, code: str):
+        with self._lock:
+            self.alarms = [a for a in self.alarms if a.get("code") != code]
+
     def tx(self):
         with self._lock:
             self.msgs_tx += 1
@@ -118,8 +122,6 @@ class StationState:
                 self.sensor["yaw_deg"] = d["yaw_deg"]
             if "pitch_deg" in d:
                 self.sensor["pitch_deg"] = d["pitch_deg"]
-            if (d.get("result") or "").lower().startswith("fault cleared"):
-                self.alarms.clear()
             self._mark_rx_unlocked()
 
     def snapshot(self):
@@ -236,6 +238,8 @@ class InboundListener:
             self.state.set_command_ack(d)
             log.info(f"[CMD_ACK] {d}")
             self.state.add_event("Control: CMD_ACK")
+            if (d.get("result") or "").lower().startswith("fault cleared"):
+                self.state.clear_alarm_code("MANUAL_INJECT")
         elif t == MsgType.VIDEO_FRAME:
             d = msg.payload_json() or {}
             with self.state._lock:
