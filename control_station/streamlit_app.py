@@ -12,6 +12,13 @@ _sat_data = {}
 _listeners_started = False
 
 
+def _rerun():
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
+
 def _start_udp_listeners(state_port: int, sat_port: int, max_size: int = 65535):
     def _loop_state():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -71,31 +78,51 @@ def main():
                 _start_udp_listeners(int(state_port), int(sat_port))
                 _listeners_started = True
         st.caption(f"Listeners running: {_listeners_started}")
+        if st.button("Refresh now"):
+            _rerun()
 
     with _state_lock:
         state = dict(_state_data)
     with _sat_lock:
         sat = dict(_sat_data)
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Link", "UP" if state.get("link_up") else "DOWN")
-    col2.metric("RTT (ms)", state.get("rtt_ms") or "—")
-    col3.metric("TX", state.get("msgs_tx", 0))
-    col4.metric("RX", state.get("msgs_rx", 0))
+    st.markdown(
+        """
+        <style>
+        .panel { background: #f7f5f2; border: 1px solid #e2ddd6; border-radius: 14px; padding: 16px; }
+        .title { font-family: "Palatino", "Georgia", serif; letter-spacing: 0.5px; }
+        .subtitle { color: #5d5d5d; }
+        .kpi { font-size: 22px; font-weight: 700; }
+        .kpi-label { color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        .soft { color: #777; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<h1 class='title'>WTSP Control Station</h1>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>Wind Turbine Space Protocol — Live Operations Dashboard</div>", unsafe_allow_html=True)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Link", "UP" if state.get("link_up") else "DOWN")
+    k2.metric("RTT (ms)", state.get("rtt_ms") or "—")
+    k3.metric("TX", state.get("msgs_tx", 0))
+    k4.metric("RX", state.get("msgs_rx", 0))
+    k5.metric("Handshake", "OK" if state.get("handshake_ok") else "PENDING")
 
     st.subheader("Telemetry")
     sensor = state.get("sensor", {})
     telem = state.get("telemetry", {})
-    t1, t2, t3 = st.columns(3)
+    t1, t2, t3, t4 = st.columns(4)
     t1.metric("State", sensor.get("state", "—"))
     t1.metric("Wind (m/s)", sensor.get("wind_speed_ms", "—"))
-    t1.metric("Rotor RPM", sensor.get("rotor_rpm", "—"))
+    t2.metric("Rotor RPM", sensor.get("rotor_rpm", "—"))
     t2.metric("Power (kW)", sensor.get("power_kw", "—"))
-    t2.metric("Nacelle °C", sensor.get("nacelle_temp_c", "—"))
-    t2.metric("Vibration (g)", sensor.get("vibration_g", "—"))
-    t3.metric("Yaw (deg)", sensor.get("yaw_deg", "—"))
-    t3.metric("Pitch (deg)", sensor.get("pitch_deg", "—"))
-    t3.metric("Uptime (s)", telem.get("uptime_s", "—"))
+    t3.metric("Nacelle °C", sensor.get("nacelle_temp_c", "—"))
+    t3.metric("Vibration (g)", sensor.get("vibration_g", "—"))
+    t4.metric("Yaw (deg)", sensor.get("yaw_deg", "—"))
+    t4.metric("Pitch (deg)", sensor.get("pitch_deg", "—"))
+    t4.metric("Uptime (s)", telem.get("uptime_s", "—"))
 
     st.subheader("Controls")
     c1, c2, c3, c4 = st.columns(4)
@@ -125,8 +152,9 @@ def main():
         st.write("No events yet")
 
     st.subheader("RUDP Stats")
-    st.code(state.get("rudp_status", "—"))
-    st.json(state.get("rudp_stats", {}))
+    rs1, rs2 = st.columns(2)
+    rs1.code(state.get("rudp_status", "—"))
+    rs2.json(state.get("rudp_stats", {}))
 
     st.subheader("Satellite / Channel Status")
     st.json(sat or {})
@@ -149,7 +177,7 @@ def main():
 
     if st.session_state.get("auto_refresh", True):
         time.sleep(0.5)
-        st.experimental_rerun()
+        _rerun()
 
 
 if __name__ == "__main__":
