@@ -9,7 +9,7 @@ _state_lock = threading.Lock()
 _sat_lock = threading.Lock()
 _state_data = {}
 _sat_data = {}
-_listeners_started = False
+_listener_error = None
 
 
 def _rerun():
@@ -21,9 +21,15 @@ def _rerun():
 
 def _start_udp_listeners(state_port: int, sat_port: int, max_size: int = 65535):
     def _loop_state():
+        global _listener_error
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", state_port))
+        try:
+            sock.bind(("0.0.0.0", state_port))
+        except OSError as exc:
+            with _state_lock:
+                _listener_error = f"State listener bind failed on {state_port}: {exc}"
+            return
         while True:
             data, _ = sock.recvfrom(max_size)
             try:
@@ -35,9 +41,15 @@ def _start_udp_listeners(state_port: int, sat_port: int, max_size: int = 65535):
                 _state_data.update(payload)
 
     def _loop_sat():
+        global _listener_error
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", sat_port))
+        try:
+            sock.bind(("0.0.0.0", sat_port))
+        except OSError as exc:
+            with _sat_lock:
+                _listener_error = f"Satellite listener bind failed on {sat_port}: {exc}"
+            return
         while True:
             data, _ = sock.recvfrom(max_size)
             try:
@@ -62,6 +74,10 @@ def _send_ui_cmd(host: str, port: int, cmd: str, value=None):
 
 def main():
     st.set_page_config(page_title="WTSP Control Station", layout="wide")
+    if "listeners_started" not in st.session_state:
+        st.session_state["listeners_started"] = False
+    if "listener_error" not in st.session_state:
+        st.session_state["listener_error"] = ""
     st.sidebar.checkbox("Auto-refresh", value=True, key="auto_refresh")
 
     st.title("WTSP Control Station — Streamlit Demo")
@@ -73,11 +89,15 @@ def main():
         cmd_port = st.number_input("Command port", value=9103, step=1)
         sat_port = st.number_input("Satellite status port", value=9104, step=1)
         if st.button("Connect listeners"):
-            global _listeners_started
-            if not _listeners_started:
+            if not st.session_state["listeners_started"]:
                 _start_udp_listeners(int(state_port), int(sat_port))
-                _listeners_started = True
-        st.caption(f"Listeners running: {_listeners_started}")
+                st.session_state["listeners_started"] = True
+        st.caption(f"Listeners running: {st.session_state['listeners_started']}")
+        with _state_lock:
+            if _listener_error:
+                st.session_state["listener_error"] = _listener_error
+        if st.session_state.get("listener_error"):
+            st.error(st.session_state["listener_error"])
         if st.button("Refresh now"):
             _rerun()
 
