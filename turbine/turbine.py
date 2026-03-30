@@ -27,7 +27,7 @@ import logging
 import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from common.protocol import Message, MsgType, NodeID, AlarmLevel
+from common.protocol import Message, MsgType, NodeID, AlarmLevel, make_nack
 from common.reliable_udp import ReliableUDP
 
 logging.basicConfig(
@@ -36,6 +36,65 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 log = logging.getLogger('turbine')
+
+
+# ══════════════════════════════════════════════
+#  Security monitor (bonus task 3)
+# ══════════════════════════════════════════════
+class SecurityMonitor:
+    def __init__(self, threshold: int = 3, quarantine_s: float = 5.0):
+        self._lock = threading.Lock()
+        self._score = {}         # addr -> score
+        self._blocked_until = {} # addr -> monotonic time
+        self._last_seq = {}      # addr -> last seq
+        self._last_cmd_at = {}   # addr -> monotonic time
+        self._alerts = []        # list of dicts to forward as ALARM
+        self._threshold = threshold
+        self._quarantine_s = quarantine_s
+
+    def is_blocked(self, addr: tuple) -> bool:
+        with self._lock:
+            until = self._blocked_until.get(addr, 0)
+        return time.monotonic() < until
+
+    def record_event(self, addr: tuple, code: str, message: str):
+        with self._lock:
+            self._alerts.append({
+                "code": f"SECURITY_{code}",
+                "level": int(AlarmLevel.CRITICAL),
+                "message": message,
+                "ts": time.time(),
+                "src": f"{addr[0]}:{addr[1]}",
+            })
+            self._score[addr] = self._score.get(addr, 0) + 1
+            if self._score[addr] >= self._threshold:
+                self._blocked_until[addr] = time.monotonic() + self._quarantine_s
+
+    def check_replay(self, addr: tuple, seq_num: int) -> bool:
+        with self._lock:
+            last = self._last_seq.get(addr)
+            self._last_seq[addr] = seq_num
+        if last is None:
+            return False
+        return seq_num <= last
+
+    def check_rate(self, addr: tuple, min_interval_s: float = 0.2) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            last = self._last_cmd_at.get(addr)
+            self._last_cmd_at[addr] = now
+        if last is None:
+            return False
+        return (now - last) < min_interval_s
+
+    def pop_alerts(self):
+        with self._lock:
+            alerts = list(self._alerts)
+            self._alerts.clear()
+            return alerts
+
+
+security = SecurityMonitor()
 
 
 # ══════════════════════════════════════════════
@@ -268,9 +327,36 @@ class YawService:
     def _handle(self, msg: Message, addr: tuple):
         if msg.msg_type != MsgType.CONTROL_CMD:
             return
+        if security.is_blocked(addr):
+            log.warning(f"[SEC] blocked sender {addr} (yaw)")
+            return
+        if security.check_replay(addr, msg.seq_num):
+            log.warning(f"[SEC] replay detected from {addr} (yaw)")
+            security.record_event(addr, "REPLAY", "Replay detected on yaw command")
+            nack = make_nack(msg, NodeID.TURBINE, "replay detected")
+            self.rudp.send_unreliable(nack, addr)
+            return
+        if security.check_rate(addr):
+            log.warning(f"[SEC] rate limit from {addr} (yaw)")
+            security.record_event(addr, "RATE", "Command rate too high (yaw)")
+            nack = make_nack(msg, NodeID.TURBINE, "rate limit")
+            self.rudp.send_unreliable(nack, addr)
+            return
         data   = msg.payload_json() or {}
         log.info(f"[CTRL] set_yaw from {addr}")
-        result = self.turbine.cmd_yaw(data.get("value", 0))
+        try:
+            val = float(data.get("value", 0))
+        except Exception:
+            security.record_event(addr, "MALFORMED", "Non-numeric yaw value")
+            nack = make_nack(msg, NodeID.TURBINE, "invalid yaw value")
+            self.rudp.send_unreliable(nack, addr)
+            return
+        if abs(val) > 720:
+            security.record_event(addr, "RANGE", "Yaw value out of safe range")
+            nack = make_nack(msg, NodeID.TURBINE, "yaw out of range")
+            self.rudp.send_unreliable(nack, addr)
+            return
+        result = self.turbine.cmd_yaw(val)
 
         ack = Message(
             MsgType.CONTROL_ACK, NodeID.TURBINE, msg.src,
@@ -301,6 +387,21 @@ class PitchService:
     def _handle(self, msg: Message, addr: tuple):
         if msg.msg_type != MsgType.CONTROL_CMD:
             return
+        if security.is_blocked(addr):
+            log.warning(f"[SEC] blocked sender {addr} (pitch)")
+            return
+        if security.check_replay(addr, msg.seq_num):
+            log.warning(f"[SEC] replay detected from {addr} (pitch)")
+            security.record_event(addr, "REPLAY", "Replay detected on pitch/clear command")
+            nack = make_nack(msg, NodeID.TURBINE, "replay detected")
+            self.rudp.send_unreliable(nack, addr)
+            return
+        if security.check_rate(addr):
+            log.warning(f"[SEC] rate limit from {addr} (pitch)")
+            security.record_event(addr, "RATE", "Command rate too high (pitch)")
+            nack = make_nack(msg, NodeID.TURBINE, "rate limit")
+            self.rudp.send_unreliable(nack, addr)
+            return
         data   = msg.payload_json() or {}
         action = data.get("action", "set_pitch")
         log.info(f"[CTRL] {action} from {addr}")
@@ -309,8 +410,25 @@ class PitchService:
             result = self.turbine.cmd_clear_fault()
         elif action == "inject_fault":
             result = self.turbine.cmd_inject_fault()
+        elif action == "set_pitch":
+            try:
+                val = float(data.get("value", 0))
+            except Exception:
+                security.record_event(addr, "MALFORMED", "Non-numeric pitch value")
+                nack = make_nack(msg, NodeID.TURBINE, "invalid pitch value")
+                self.rudp.send_unreliable(nack, addr)
+                return
+            if val < 0 or val > 90:
+                security.record_event(addr, "RANGE", "Pitch value out of safe range")
+                nack = make_nack(msg, NodeID.TURBINE, "pitch out of range")
+                self.rudp.send_unreliable(nack, addr)
+                return
+            result = self.turbine.cmd_pitch(val)
         else:
-            result = self.turbine.cmd_pitch(data.get("value", 0))
+            security.record_event(addr, "MALFORMED", f"Unknown control action {action}")
+            nack = make_nack(msg, NodeID.TURBINE, "unknown control action")
+            self.rudp.send_unreliable(nack, addr)
+            return
 
         ack = Message(
             MsgType.CONTROL_ACK, NodeID.TURBINE, msg.src,
@@ -389,6 +507,14 @@ class TelemetryService:
             self._station_addr = addr
 
         if msg.msg_type == MsgType.HELLO:
+            if security.is_blocked(addr):
+                log.warning(f"[SEC] blocked sender {addr} (hello)")
+                return
+            if msg.payload_json() is None:
+                security.record_event(addr, "MALFORMED", "HELLO payload invalid JSON")
+                nack = make_nack(msg, NodeID.TURBINE, "invalid HELLO payload")
+                self.rudp.send_unreliable(nack, addr)
+                return
             log.info(f"[TELEM] HELLO from {addr}")
             reply = Message(
                 MsgType.HELLO_ACK, NodeID.TURBINE, msg.src,
@@ -405,6 +531,27 @@ class TelemetryService:
             self.rudp.send_reliable(reply, addr)
 
         elif msg.msg_type == MsgType.NEGOTIATE:
+            if security.is_blocked(addr):
+                log.warning(f"[SEC] blocked sender {addr} (negotiate)")
+                return
+            payload = msg.payload_json()
+            if payload is None:
+                security.record_event(addr, "MALFORMED", "NEGOTIATE payload invalid JSON")
+                nack = make_nack(msg, NodeID.TURBINE, "invalid NEGOTIATE payload")
+                self.rudp.send_unreliable(nack, addr)
+                return
+            interval = payload.get("requested_sensor_interval_s", 2)
+            sensors = payload.get("requested_sensors", [])
+            if not isinstance(sensors, list) or len(sensors) > 10:
+                security.record_event(addr, "NEGOTIATE", "Suspicious sensors list")
+                nack = make_nack(msg, NodeID.TURBINE, "invalid sensors list")
+                self.rudp.send_unreliable(nack, addr)
+                return
+            if interval < 1 or interval > 10:
+                security.record_event(addr, "NEGOTIATE", "Suspicious interval request")
+                nack = make_nack(msg, NodeID.TURBINE, "invalid interval")
+                self.rudp.send_unreliable(nack, addr)
+                return
             log.info("[TELEM] NEGOTIATE received")
             reply = Message(
                 MsgType.NEGOTIATE_ACK, NodeID.TURBINE, msg.src,
@@ -473,6 +620,15 @@ class TelemetryService:
                     )
                     self.rudp.send_reliable(alarm_msg, addr)
                     log.warning(f"[TELEM] Alarm pushed: {alarm['code']}")
+
+            # ── Push security alerts ──
+            for alert in security.pop_alerts():
+                sec_msg = Message(
+                    MsgType.ALARM, NodeID.TURBINE, NodeID.STATION,
+                    payload=alert
+                )
+                self.rudp.send_reliable(sec_msg, addr)
+                log.warning(f"[SEC] Alert pushed: {alert['code']}")
 
 
 # ══════════════════════════════════════════════

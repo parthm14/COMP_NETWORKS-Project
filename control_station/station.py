@@ -202,6 +202,8 @@ class InboundListener:
             self.state.add_alarm(d)
             log.info(f"[ALARM] {d.get('code')}: {d.get('message')}")
             self.state.add_event(f"Alarm raised: {d.get('code')}")
+            if str(d.get("code", "")).startswith("SECURITY_"):
+                self.state.add_event("Security: alert received")
 
         elif t == MsgType.HELLO_ACK:
             self.hello_ack_data = msg.payload_json() or {}

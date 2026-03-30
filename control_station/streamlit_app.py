@@ -141,7 +141,11 @@ def main():
     c2.code(json.dumps(vout, indent=2) if vout else "—")
 
     st.subheader("Security (Bonus Task 3)")
-    st.info("Security/malicious detection logs will appear here.")
+    sec = [a for a in (state.get("alarms", []) or []) if str(a.get("code", "")).startswith("SECURITY_")]
+    if sec:
+        st.json(sec)
+    else:
+        st.info("No security alerts.")
 
     if st.session_state.get("auto_refresh", True):
         time.sleep(0.5)
