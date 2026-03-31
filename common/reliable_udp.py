@@ -85,10 +85,13 @@ class ReliableUDP:
         self.timeout_s  = timeout_s
         self.max_retry  = max_retry
 
-        # The one UDP socket for this port
+        # The one UDP socket for this port.
+        # Bind to 0.0.0.0 so the socket accepts packets on ALL local interfaces
+        # (WiFi, hotspot, etc.).  The configured `host` is only used as the
+        # logical identity for logging; sendto destinations come from the caller.
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((host, port))
+        self._sock.bind(('0.0.0.0', port))
 
         # Callback set by the application:  fn(msg: Message, addr: tuple)
         # Called from the recv thread for every new (non-duplicate) data message.

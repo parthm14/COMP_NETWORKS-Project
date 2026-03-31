@@ -121,9 +121,11 @@ class UdpRelay:
         self.listen_host = listen_host
         self.listen_port = listen_port
 
+        # Bind to 0.0.0.0 so this socket accepts packets arriving on any
+        # network interface (WiFi, hotspot, etc.) on this machine.
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((listen_host, listen_port))
+        self._sock.bind(('0.0.0.0', listen_port))
 
         self.stats = {
             "rx": 0,

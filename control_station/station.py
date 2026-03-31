@@ -463,7 +463,8 @@ class UiBridge:
         self._tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._rx_sock.bind((host, cmd_port))
+        # Bind to 0.0.0.0 so Streamlit (same machine) can reach this on any interface
+        self._rx_sock.bind(('0.0.0.0', cmd_port))
 
     def start(self):
         threading.Thread(target=self._tx_loop, daemon=True).start()
@@ -484,7 +485,7 @@ class UiBridge:
 
     def _rx_loop(self):
         while True:
-            data, addr = self._rx_sock.recvfrom(4096)
+            data, _ = self._rx_sock.recvfrom(4096)
             try:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
