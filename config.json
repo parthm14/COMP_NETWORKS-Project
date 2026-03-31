@@ -2,7 +2,7 @@
   "_comment": "BEFORE deploying to 3 machines, replace 127.0.0.1 with the real IPs.",
 
   "turbine": {
-    "host": "127.0.0.1",
+    "host": "10.6.134.140",
     "ports": {
       "yaw_control":    7001,
       "pitch_control":  7002,
@@ -13,7 +13,7 @@
   },
 
   "satellite": {
-    "host": "127.0.0.1",
+    "host": "10.6.69.223",
     "ports": {
       "uplink_from_station": 8001,
       "uplink_from_turbine": 8002
@@ -21,7 +21,7 @@
   },
 
   "station": {
-    "host": "127.0.0.1",
+    "host": "10.6.66.65",
     "ports": {
       "data_receiver": 9001
     }
@@ -47,7 +47,7 @@
   "ui": {
     "_comment": "Streamlit UI bridge (runs on station; uses local UDP)",
     "enabled": true,
-    "host": "127.0.0.1",
+    "host": "10.6.66.65",
     "state_port": 9102,
     "command_port": 9103,
     "state_interval_s": 1.0,
