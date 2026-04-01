@@ -125,6 +125,23 @@ def _read_config_ui():
         return cfg.get("ui", {}), cfg_path
     except Exception:
         return None, None
+def _local_ips():
+    ips = set()
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(None, 0, family=socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except Exception:
+        pass
+    return sorted(ips)
 
 
 _CHART_LAYOUT = dict(
@@ -181,12 +198,18 @@ def main():
         """, unsafe_allow_html=True)
         st.divider()
 
+        ui_cfg, cfg_path = _read_config_ui()
+        default_host = ui_cfg.get("host", "127.0.0.1") if ui_cfg else "127.0.0.1"
+        default_state_port = int(ui_cfg.get("state_port", 9102)) if ui_cfg else 9102
+        default_cmd_port = int(ui_cfg.get("command_port", 9103)) if ui_cfg else 9103
+        default_sat_port = int(ui_cfg.get("satellite_status_port", 9104)) if ui_cfg else 9104
+
         st.markdown('<div class="section-hdr">UI BRIDGE</div>',
                     unsafe_allow_html=True)
-        ui_host = st.text_input("Station UI host", "127.0.0.1")
-        state_port = st.number_input("State port", value=9102, step=1)
-        cmd_port = st.number_input("Command port", value=9103, step=1)
-        sat_port = st.number_input("Satellite status port", value=9104, step=1)
+        ui_host = st.text_input("Station UI host", default_host, key="ui_host")
+        state_port = st.number_input("State port", value=default_state_port, step=1, key="state_port")
+        cmd_port = st.number_input("Command port", value=default_cmd_port, step=1, key="cmd_port")
+        sat_port = st.number_input("Satellite status port", value=default_sat_port, step=1, key="sat_port")
         st.checkbox("Auto-start listeners", key="auto_start_listeners")
         if st.session_state["auto_start_listeners"] and not st.session_state["listeners_started"]:
             _start_udp_listeners(int(state_port), int(sat_port))
@@ -219,7 +242,6 @@ def main():
         st.divider()
         st.markdown('<div class="section-hdr">DIAGNOSTICS</div>',
                     unsafe_allow_html=True)
-        ui_cfg, cfg_path = _read_config_ui()
         if ui_cfg is not None:
             st.write(f"Config file: {cfg_path}")
             st.write(f"ui.enabled: {ui_cfg.get('enabled')}")
@@ -229,10 +251,19 @@ def main():
         else:
             st.write("Config file: not readable")
 
-        if st.button("Send test packet to state port", use_container_width=True):
+        local_ips = _local_ips()
+        st.write(f"Local IPs: {', '.join(local_ips) if local_ips else 'unknown'}")
+        if ui_host not in local_ips and ui_host != "127.0.0.1":
+            st.warning(
+                "The UI host is not one of this machine's IPs. "
+                "If Streamlit is not running on the station machine, "
+                "the station will not send UI snapshots here."
+            )
+
+        if st.button("Send test packet to ui.host", use_container_width=True):
+            _send_test_packet(str(ui_host), int(state_port), {"_test": "state", "ts": time.time()})
+        if st.button("Send test packet to 127.0.0.1", use_container_width=True):
             _send_test_packet("127.0.0.1", int(state_port), {"_test": "state", "ts": time.time()})
-        if st.button("Send test packet to sat port", use_container_width=True):
-            _send_test_packet("127.0.0.1", int(sat_port), {"_test": "sat", "ts": time.time()})
 
         st.divider()
         st.markdown('<div class="section-hdr">CONTROL</div>',
