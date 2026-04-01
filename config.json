@@ -44,14 +44,5 @@
     "heartbeat_interval": 10
   },
 
-  "ui": {
-    "_comment": "Streamlit UI bridge (runs on station; uses local UDP)",
-    "enabled": true,
-    "host": "10.6.66.65",
-    "state_port": 9102,
-    "command_port": 9103,
-    "state_interval_s": 1.0,
-    "satellite_status_port": 9104,
-    "satellite_interval_s": 1.0
-  }
+  "_ui_removed": "Streamlit UI removed for final demo"
 }

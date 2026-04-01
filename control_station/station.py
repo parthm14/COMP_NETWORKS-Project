@@ -455,63 +455,6 @@ class VideoSender:
                 self.state.video_out = dict(frame)
             self.state.add_event("Video: TX frame")
 
-class UiBridge:
-    """
-    Lightweight UDP bridge for Streamlit UI.
-    Receives UI commands and periodically broadcasts station state.
-    """
-    def __init__(self, state: StationState, commander: Commander, listener: InboundListener,
-                 host: str, state_port: int, cmd_port: int, interval_s: float = 1.0):
-        self.state = state
-        self.commander = commander
-        self.listener = listener
-        self.host = host
-        self.state_port = state_port
-        self.cmd_port = cmd_port
-        self.interval_s = interval_s
-
-        self._tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Bind to 0.0.0.0 so Streamlit (same machine) can reach this on any interface
-        self._rx_sock.bind(('0.0.0.0', cmd_port))
-
-    def start(self):
-        threading.Thread(target=self._tx_loop, daemon=True).start()
-        threading.Thread(target=self._rx_loop, daemon=True).start()
-        log.info(f"[UI  ] bridge active: state→{self.host}:{self.state_port} cmd←{self.host}:{self.cmd_port}")
-
-    def _build_snapshot(self):
-        snap = self.state.snapshot()
-        snap["rudp_stats"] = dict(self.listener.rudp.stats)
-        snap["rudp_status"] = self.listener.rudp.status()
-        return snap
-
-    def _tx_loop(self):
-        while True:
-            time.sleep(self.interval_s)
-            payload = json.dumps(self._build_snapshot(), separators=(',', ':')).encode("utf-8")
-            self._tx_sock.sendto(payload, (self.host, self.state_port))
-
-    def _rx_loop(self):
-        while True:
-            data, _ = self._rx_sock.recvfrom(4096)
-            try:
-                msg = json.loads(data.decode("utf-8"))
-            except Exception:
-                continue
-            cmd = msg.get("cmd")
-            if cmd == "yaw":
-                self.commander.set_yaw(float(msg.get("value", 0)))
-            elif cmd == "pitch":
-                self.commander.set_pitch(float(msg.get("value", 0)))
-            elif cmd == "clear":
-                self.commander.clear_fault()
-            elif cmd == "fault":
-                self.commander.inject_fault()
-            else:
-                log.info(f"UI cmd ignored: {msg}")
-
 def handshake_until_success(commander: Commander, timeout: float = 30.0, retry_delay: float = 5.0):
     while True:
         if commander.handshake(timeout=timeout):
@@ -688,19 +631,6 @@ def main():
     log.info(f"[NET ] Inbound RX : {sta_host}:{sta_ports['data_receiver']}")
     log.info(f"[NET ] Satellite  : {sat_host}:{sat_ports['uplink_from_station']}")
     log.info("=" * 56)
-
-    # Optional UI bridge for Streamlit
-    ui_cfg = cfg.get("ui", {})
-    if ui_cfg.get("enabled", False):
-        UiBridge(
-            state,
-            commander,
-            listener,
-            host=ui_cfg.get("host", "127.0.0.1"),
-            state_port=ui_cfg.get("state_port", 9102),
-            cmd_port=ui_cfg.get("command_port", 9103),
-            interval_s=ui_cfg.get("state_interval_s", 1.0),
-        ).start()
 
     # Run discovery handshake in background so CLI can start immediately
     threading.Thread(

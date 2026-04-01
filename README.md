@@ -10,7 +10,7 @@ It uses raw UDP with a custom WTSP binary protocol and Stop‑and‑Wait ARQ.
 ## Requirements
 - Python 3.10+ (tested with 3.12)
 - No extra deps for core system
-- Streamlit optional for UI
+- Streamlit UI removed for final demo (CLI only)
 
 ## Quick Start (Local Demo)
 
@@ -36,24 +36,8 @@ You should see:
 - Link UP and RTT on the station dashboard
 - Telemetry updating
 
-## Streamlit UI (Optional)
-
-Install:
-```
-pip install streamlit
-```
-
-Run:
-```
-./run_streamlit.sh
-```
-
-Open:
-```
-http://localhost:8501
-```
-
-In the sidebar click **Connect listeners**.
+## Streamlit UI
+Removed for final demo (CLI-only control and monitoring).
 
 ## Full Core Test Checklist
 
@@ -76,7 +60,6 @@ Confirm:
 This runs automatically. You should see:
 - Station logs: `[VIDEO] RX frame ... from turbine`
 - Turbine logs: `[VIDEO] RX frame ... from station`
-- Streamlit video panel shows `video_in` and `video_out`
 
 ## Bonus Task 3 (Malicious Detection / Mitigation)
 
@@ -88,7 +71,6 @@ pitch 200
 Expected:
 - Station logs `NACK` with reason
 - SECURITY alert appears in alarms
-- Streamlit security panel shows security alert
 
 ## 3‑Machine Deployment
 
@@ -101,7 +83,6 @@ Run:
 - Machine 1: `./run_turbine.sh`
 - Machine 2: `./run_satellite.sh`
 - Machine 3: `./run_station.sh`
-- Optional UI on Machine 3: `./run_streamlit.sh`
 
 ## Files of Interest
 - `common/protocol.py` — WTSP binary protocol
@@ -110,4 +91,3 @@ Run:
 - `turbine/turbine.py` — Turbine services + physics model
 - `satellite/satellite.py` — Relay + channel effects
 - `control_station/station.py` — Station dashboard + CLI
-- `control_station/streamlit_app.py` — Streamlit UI
