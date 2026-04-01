@@ -254,7 +254,7 @@ class TurbineModel:
     # ── Public command API ────────────────────
     def cmd_yaw(self, degrees: float) -> str:
         self._target_yaw = float(degrees) % 360
-        log.info(f"Yaw target → {self._target_yaw:.1f}°")
+        log.info(f"[CTRL] Yaw target → {self._target_yaw:.1f}°")
         return f"Yaw target set to {self._target_yaw:.1f}°"
 
     def cmd_pitch(self, degrees: float) -> str:
@@ -262,7 +262,7 @@ class TurbineModel:
             if self.state == self.State.FAULT:
                 return "REJECTED: turbine in FAULT state"
         self._target_pitch = max(0.0, min(90.0, float(degrees)))
-        log.info(f"Pitch target → {self._target_pitch:.1f}°")
+        log.info(f"[CTRL] Pitch target → {self._target_pitch:.1f}°")
         return f"Pitch target set to {self._target_pitch:.1f}°"
 
     def cmd_clear_fault(self) -> str:
@@ -270,7 +270,7 @@ class TurbineModel:
             if self.state == self.State.FAULT:
                 self.state = self.State.IDLE
                 self.alarms.clear()
-                log.info("Fault cleared by station command")
+                log.info("[FAULT] Cleared by station command")
                 return "Fault cleared"
         return "No active fault"
 
@@ -282,7 +282,7 @@ class TurbineModel:
             AlarmLevel.CRITICAL,
             "Fault injected for demo/verification"
         )
-        log.warning("Fault injected by station command")
+        log.warning("[FAULT] Injected by station command")
         return "Fault injected"
     def snapshot(self) -> dict:
         with self._lock:
@@ -515,7 +515,7 @@ class TelemetryService:
                 nack = make_nack(msg, NodeID.TURBINE, "invalid HELLO payload")
                 self.rudp.send_unreliable(nack, addr)
                 return
-            log.info(f"[TELEM] HELLO from {addr}")
+            log.info(f"[PROTO] HELLO from {addr}")
             reply = Message(
                 MsgType.HELLO_ACK, NodeID.TURBINE, msg.src,
                 payload={
@@ -552,7 +552,7 @@ class TelemetryService:
                 nack = make_nack(msg, NodeID.TURBINE, "invalid interval")
                 self.rudp.send_unreliable(nack, addr)
                 return
-            log.info("[TELEM] NEGOTIATE received")
+            log.info("[PROTO] NEGOTIATE received")
             reply = Message(
                 MsgType.NEGOTIATE_ACK, NodeID.TURBINE, msg.src,
                 payload={
@@ -574,7 +574,7 @@ class TelemetryService:
 
         elif msg.msg_type == MsgType.AGREE:
             data = msg.payload_json() or {}
-            log.info(f"[TELEM] AGREE received — plan: {data.get('plan')}")
+            log.info(f"[PROTO] AGREE received — plan: {data.get('plan')}")
 
         elif msg.msg_type == MsgType.HEARTBEAT:
             hb_ack = Message(MsgType.HEARTBEAT_ACK, NodeID.TURBINE, msg.src)
@@ -605,7 +605,7 @@ class TelemetryService:
             )
             ok = self.rudp.send_reliable(telem, addr)
             if not ok:
-                log.warning("[TELEM] Could not deliver telemetry to station")
+                log.warning("[RUDP] Telemetry delivery failed")
 
             # ── Push new alarms ──
             current_codes = {a["code"] for a in snap["alarms"]}
@@ -619,7 +619,7 @@ class TelemetryService:
                         payload=alarm
                     )
                     self.rudp.send_reliable(alarm_msg, addr)
-                    log.warning(f"[TELEM] Alarm pushed: {alarm['code']}")
+                    log.warning(f"[ALARM] {alarm['code']} pushed")
 
             # ── Push security alerts ──
             for alert in security.pop_alerts():
@@ -628,7 +628,7 @@ class TelemetryService:
                     payload=alert
                 )
                 self.rudp.send_reliable(sec_msg, addr)
-                log.warning(f"[SEC] Alert pushed: {alert['code']}")
+                log.warning(f"[SECURITY] Alert pushed: {alert['code']}")
 
 
 # ══════════════════════════════════════════════
@@ -715,11 +715,11 @@ def main():
                            turbine, interval=1.0, rudp_kwargs=rudp_kwargs).start()
 
     log.info("=" * 58)
-    log.info("  Wind Turbine node ready  (all UDP, custom ARQ)")
-    log.info(f"  Yaw     : UDP {turbine_host}:{ports['yaw_control']}")
-    log.info(f"  Pitch   : UDP {turbine_host}:{ports['pitch_control']}")
-    log.info(f"  Sensor  : UDP {turbine_host}:{ports['sensor_stream']} → sat")
-    log.info(f"  Telem   : UDP {turbine_host}:{ports['telemetry']}")
+    log.info("[WTSP] Turbine node ready  (all UDP, custom ARQ)")
+    log.info(f"[NET ] Yaw     : UDP {turbine_host}:{ports['yaw_control']}")
+    log.info(f"[NET ] Pitch   : UDP {turbine_host}:{ports['pitch_control']}")
+    log.info(f"[NET ] Sensor  : UDP {turbine_host}:{ports['sensor_stream']} → sat")
+    log.info(f"[NET ] Telem   : UDP {turbine_host}:{ports['telemetry']}")
     log.info("=" * 58)
 
     try:
@@ -727,7 +727,7 @@ def main():
             time.sleep(10)
             s = turbine.snapshot()
             log.info(
-                f"STATE={s['state']:8s}  wind={s['wind_speed_ms']:5.1f}m/s  "
+                f"[STATE] {s['state']:8s}  wind={s['wind_speed_ms']:5.1f}m/s  "
                 f"rpm={s['rotor_rpm']:5.1f}  power={s['power_kw']:7.1f}kW  "
                 f"yaw={s['yaw_deg']:5.1f}°  pitch={s['pitch_deg']:4.1f}°"
             )

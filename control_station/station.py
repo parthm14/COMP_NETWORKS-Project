@@ -44,6 +44,12 @@ logging.basicConfig(
 )
 log = logging.getLogger('station')
 
+# Prevent dashboard refresh from overwriting interactive CLI input.
+input_active = threading.Event()
+
+# Throttle noisy video RX logs so CLI input stays readable.
+_last_video_log_ts = 0.0
+
 
 # ══════════════════════════════════════════════
 #  Shared state  (written by receiver thread, read by dashboard)
@@ -177,7 +183,7 @@ class InboundListener:
 
     def start(self):
         self.rudp.start()
-        log.info(f"Inbound listener UDP :{self.rudp.port}")
+        log.info(f"[NET ] Inbound listener UDP :{self.rudp.port}")
 
     def _dispatch(self, msg: Message, addr: tuple):
         if msg.msg_type != MsgType.ACK:
@@ -185,7 +191,7 @@ class InboundListener:
                 last = self.state.last_rx_at
                 timeout_s = self.state.link_timeout_s
             if last is None or (time.monotonic() - last) > timeout_s:
-                log.info("Link recovery: inbound traffic resumed")
+                log.info("[LINK] Recovery — inbound traffic resumed")
                 self.state.add_event("Link recovered (traffic resumed)")
 
         t = msg.msg_type
@@ -210,7 +216,7 @@ class InboundListener:
         elif t == MsgType.HELLO_ACK:
             self.hello_ack_data = msg.payload_json() or {}
             self.state.note_rx()
-            log.info(f"[HELLO_ACK] turbine says: {self.hello_ack_data}")
+            log.info(f"[PROTO] HELLO_ACK from turbine: {self.hello_ack_data}")
             self.state.add_event("Discovery: HELLO_ACK")
             self.hello_ack_event.set()
 
@@ -220,7 +226,7 @@ class InboundListener:
                 self.state.turbine_caps = d.get("capabilities", {})
                 self.state._mark_rx_unlocked()
             self.negotiate_ack_data = d
-            log.info(f"[NEGOTIATE_ACK] caps={self.state.turbine_caps}")
+            log.info(f"[PROTO] NEGOTIATE_ACK caps={self.state.turbine_caps}")
             self.state.add_event("Negotiation: NEGOTIATE_ACK")
             self.negotiate_ack_event.set()
 
@@ -236,7 +242,7 @@ class InboundListener:
         elif t == MsgType.CONTROL_ACK:
             d = msg.payload_json() or {}
             self.state.set_command_ack(d)
-            log.info(f"[CMD_ACK] {d}")
+            log.info(f"[CTRL] CMD_ACK {d}")
             self.state.add_event("Control: CMD_ACK")
             if (d.get("result") or "").lower().startswith("fault cleared"):
                 self.state.clear_alarm_code("MANUAL_INJECT")
@@ -245,7 +251,11 @@ class InboundListener:
             with self.state._lock:
                 self.state.video_in = d
                 self.state._mark_rx_unlocked()
-            log.info(f"[VIDEO] RX frame {d.get('seq')} from turbine")
+            now = time.time()
+            global _last_video_log_ts
+            if not input_active.is_set() and (now - _last_video_log_ts) > 2.0:
+                _last_video_log_ts = now
+                log.info(f"[VIDEO] RX frame {d.get('seq')} from turbine")
             self.state.add_event("Video: RX frame")
 
         elif t == MsgType.ACK:
@@ -302,14 +312,14 @@ class Commander:
             NodeID.TURBINE,
             payload={"node_id": "STATION", "version": "1.0"}
         )
-        log.info(f"Sending HELLO to satellite {self.sat_addr}…")
+        log.info(f"[PROTO] HELLO → satellite {self.sat_addr}")
         self.state.add_event("Discovery: HELLO sent")
         if not self._send_reliable(hello):
-            log.warning("HELLO transport delivery failed")
+            log.warning("[RUDP] HELLO delivery failed")
             return False
 
         if not self.listener.hello_ack_event.wait(timeout=timeout):
-            log.warning("HELLO_ACK not received within timeout (satellite may be in outage)")
+            log.warning("[PROTO] HELLO_ACK timeout (satellite may be in outage)")
             return False
 
         # NEGOTIATE
@@ -324,11 +334,11 @@ class Commander:
         )
         self.state.add_event("Negotiation: NEGOTIATE sent")
         if not self._send_reliable(neg):
-            log.warning("NEGOTIATE transport delivery failed")
+            log.warning("[RUDP] NEGOTIATE delivery failed")
             return False
 
         if not self.listener.negotiate_ack_event.wait(timeout=timeout):
-            log.warning("NEGOTIATE_ACK not received within timeout")
+            log.warning("[PROTO] NEGOTIATE_ACK timeout")
             return False
 
         # AGREE
@@ -340,11 +350,11 @@ class Commander:
         )
         self.state.add_event("Agreement: AGREE sent")
         if not self._send_reliable(agree):
-            log.warning("AGREE delivery failed")
+            log.warning("[RUDP] AGREE delivery failed")
             return False
 
         self.state.set_handshake_ok(True)
-        log.info("Handshake complete — link established")
+        log.info("[PROTO] Handshake complete — link established")
         self.state.add_event("Agreement: Handshake complete")
         return True
 
@@ -355,7 +365,7 @@ class Commander:
             NodeID.TURBINE,
             payload={"action": "set_yaw", "value": round(float(degrees), 1)}
         )
-        log.info(f"CMD set_yaw → {degrees}°")
+        log.info(f"[CTRL] CMD_YAW → {degrees}°")
         self.state.add_event(f"Control: set_yaw {degrees}")
         return self._send_reliable(msg)
 
@@ -366,7 +376,7 @@ class Commander:
             NodeID.TURBINE,
             payload={"action": "set_pitch", "value": round(float(degrees), 1)}
         )
-        log.info(f"CMD set_pitch → {degrees}°")
+        log.info(f"[CTRL] CMD_PITCH → {degrees}°")
         self.state.add_event(f"Control: set_pitch {degrees}")
         return self._send_reliable(msg)
 
@@ -377,7 +387,7 @@ class Commander:
             NodeID.TURBINE,
             payload={"action": "clear_fault"}
         )
-        log.info("CMD clear_fault")
+        log.info("[CTRL] CMD_CLEAR_FAULT")
         self.state.add_event("Control: clear_fault")
         return self._send_reliable(msg)
 
@@ -388,7 +398,7 @@ class Commander:
             NodeID.TURBINE,
             payload={"action": "inject_fault"}
         )
-        log.warning("CMD inject_fault")
+        log.warning("[CTRL] CMD_INJECT_FAULT")
         self.state.add_event("Control: inject_fault")
         return self._send_reliable(msg)
 
@@ -469,7 +479,7 @@ class UiBridge:
     def start(self):
         threading.Thread(target=self._tx_loop, daemon=True).start()
         threading.Thread(target=self._rx_loop, daemon=True).start()
-        log.info(f"UI bridge active: state→{self.host}:{self.state_port} cmd←{self.host}:{self.cmd_port}")
+        log.info(f"[UI  ] bridge active: state→{self.host}:{self.state_port} cmd←{self.host}:{self.cmd_port}")
 
     def _build_snapshot(self):
         snap = self.state.snapshot()
@@ -506,7 +516,7 @@ def handshake_until_success(commander: Commander, timeout: float = 30.0, retry_d
     while True:
         if commander.handshake(timeout=timeout):
             return
-        log.warning(f"Handshake incomplete; retrying in {retry_delay:.0f}s")
+        log.warning(f"[PROTO] Handshake incomplete; retrying in {retry_delay:.0f}s")
         time.sleep(retry_delay)
 
 
@@ -527,57 +537,66 @@ class Dashboard:
             self._draw()
 
     def _draw(self):
+        if input_active.is_set():
+            return
         s   = self.state.snapshot()
         t   = s["sensor"]
         tel = s["telemetry"]
-        lnk = "UP  ✓" if s["link_up"] else "DOWN ✗"
+        lnk = "UP" if s["link_up"] else "DOWN"
         rtt = f"{s['rtt_ms']} ms" if s["rtt_ms"] else "—"
+        hs  = "OK" if s["handshake_ok"] else "PENDING"
+        ts  = time.strftime("%H:%M:%S")
+        events = s.get("events", [])
+        proto_events = [e for e in events if e.startswith("Discovery") or e.startswith("Negotiation") or e.startswith("Agreement") or e.startswith("Control")]
+        proto_tail = proto_events[-3:] if proto_events else []
+
+        def fnum(val, fmt="{:.2f}"):
+            return fmt.format(val) if isinstance(val, (int, float)) else "—"
 
         lines = [
             "\033[2J\033[H",
-            "╔══════════════════════════════════════════════════════╗",
-            "║      WTSP  —  Wind Turbine Space Protocol            ║",
-            "║          Control Station  (Space Station)            ║",
-            "╠══════════════════════════════════════════════════════╣",
-            f"║  Link : {lnk:<8}  RTT : {rtt:<12}               ║",
-            f"║  TX   : {s['msgs_tx']:<6}   RX  : {s['msgs_rx']:<6}                    ║",
-            f"║  Handshake : {('OK' if s['handshake_ok'] else 'PENDING'):<10}                    ║",
-            "╠══════════════════════════════════════════════════════╣",
-            "║  TURBINE SENSORS                                      ║",
-            f"║  State      : {t.get('state','—'):<10}                          ║",
-            f"║  Wind speed : {str(t.get('wind_speed_ms','—')):>8} m/s                        ║",
-            f"║  Rotor RPM  : {str(t.get('rotor_rpm','—')):>8} RPM                        ║",
-            f"║  Power      : {str(t.get('power_kw','—')):>8} kW                         ║",
-            f"║  Nacelle °C : {str(t.get('nacelle_temp_c','—')):>8} °C                         ║",
-            f"║  Vibration  : {str(t.get('vibration_g','—')):>8} g                          ║",
-            "╠══════════════════════════════════════════════════════╣",
-            "║  ACTUATORS                                            ║",
-            f"║  Yaw        : {str(t.get('yaw_deg','—')):>8}°                            ║",
-            f"║  Blade pitch: {str(t.get('pitch_deg','—')):>8}°                            ║",
-            "╠══════════════════════════════════════════════════════╣",
-            "║  TELEMETRY                                            ║",
-            f"║  Uptime     : {str(tel.get('uptime_s','—')):>8} s                          ║",
-            f"║  Energy     : {str(tel.get('energy_kwh','—')):>8} kWh                        ║",
-            "╠══════════════════════════════════════════════════════╣",
+            "WTSP Control Station — Live Status",
+            f"Time: {ts}  Link: {lnk}  Handshake: {hs}  RTT: {rtt}  TX/RX: {s['msgs_tx']}/{s['msgs_rx']}",
+            "-" * 78,
+            "Protocol Lifecycle",
+        ]
+        if proto_tail:
+            for e in proto_tail:
+                lines.append(f"  - {e}")
+        else:
+            lines.append("  - (waiting for HELLO/NEGOTIATE/AGREE)")
+        lines += [
+            "Turbine Sensors",
+            f"  State: {t.get('state','—'):<8}  Wind: {fnum(t.get('wind_speed_ms'), '{:.2f}')} m/s  "
+            f"RPM: {fnum(t.get('rotor_rpm'), '{:.2f}')}  Power: {fnum(t.get('power_kw'), '{:.1f}')} kW",
+            f"  Nacelle: {fnum(t.get('nacelle_temp_c'), '{:.1f}')} °C  "
+            f"Vibration: {fnum(t.get('vibration_g'), '{:.4f}')} g",
+            "Actuators",
+            f"  Yaw: {fnum(t.get('yaw_deg'), '{:.1f}')}°  Pitch: {fnum(t.get('pitch_deg'), '{:.1f}')}°",
+            "Telemetry",
+            f"  Uptime: {t.get('uptime_s','—')} s  Energy: {fnum(tel.get('energy_kwh'), '{:.2f}')} kWh",
+            "Alarms",
         ]
 
         alarms = s["alarms"]
         if alarms:
-            lines.append("║  ACTIVE ALARMS ⚠                                      ║")
             for a in alarms[:3]:
                 code = a.get("code", "?")
-                msg  = a.get("message", "")[:28]
-                lines.append(f"║    {code:<16} {msg:<30}   ║")
+                msg  = a.get("message", "")[:60]
+                lines.append(f"  - {code}: {msg}")
         else:
-            lines.append("║  No active alarms                                     ║")
+            lines.append("  - None")
 
         lines += [
-            "╠══════════════════════════════════════════════════════╣",
-            "║  Commands: yaw <°>  pitch <°>  clear  fault  status  ║",
-            "╚══════════════════════════════════════════════════════╝",
+            "-" * 78,
+            "Video Feed (RX)",
+            f"  Last frame: {s.get('video_in', {}).get('seq', '—')}  "
+            f"Last note: {s.get('video_in', {}).get('note', '—')}",
+            "-" * 78,
+            "Enter command: yaw <deg> | pitch <deg> | clear | fault | status",
             "",
         ]
-        print("".join(lines), end='', flush=True)
+        print("\n".join(lines), end='', flush=True)
 
 
 # ══════════════════════════════════════════════
@@ -587,8 +606,11 @@ def cli_loop(commander: Commander, state: StationState):
     print("\nControl Station ready.  Type commands below:")
     while True:
         try:
+            input_active.set()
             raw = input(">>> ").strip()
+            input_active.clear()
         except (EOFError, KeyboardInterrupt):
+            input_active.clear()
             break
         if not raw:
             continue
@@ -662,9 +684,9 @@ def main():
     Dashboard(state).start()
 
     log.info("=" * 56)
-    log.info("  Control Station started  (UDP + custom ARQ)")
-    log.info(f"  Inbound RX : {sta_host}:{sta_ports['data_receiver']}")
-    log.info(f"  Satellite  : {sat_host}:{sat_ports['uplink_from_station']}")
+    log.info("[WTSP] Control Station started  (UDP + custom ARQ)")
+    log.info(f"[NET ] Inbound RX : {sta_host}:{sta_ports['data_receiver']}")
+    log.info(f"[NET ] Satellite  : {sat_host}:{sat_ports['uplink_from_station']}")
     log.info("=" * 56)
 
     # Optional UI bridge for Streamlit

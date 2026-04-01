@@ -143,7 +143,7 @@ class UdpRelay:
             daemon=True,
             name=self.name
         ).start()
-        log.info(f"[{self.name}] listening on {self.listen_host}:{self.listen_port} (UDP)")
+        log.info(f"[NET ] {self.name} listening on {self.listen_host}:{self.listen_port} (UDP)")
 
     def _recv_loop(self):
         while True:
@@ -234,19 +234,19 @@ class StatusReporter:
                 self._last_visible = visible
             elif visible != self._last_visible:
                 if visible:
-                    log.info("CHANNEL RECOVERY: satellite back in view")
+                    log.info("[CHANNEL] RECOVERY — satellite back in view")
                 else:
-                    log.info("CHANNEL OUTAGE: satellite below horizon")
+                    log.info("[CHANNEL] OUTAGE — satellite below horizon")
                 self._last_visible = visible
             log.info("─" * 56)
-            log.info(f"  Satellite : {r['satellite']}")
-            log.info(f"  Weather   : {r['weather']}")
+            log.info(f"[STATUS] Satellite : {r['satellite']}")
+            log.info(f"[STATUS] Weather   : {r['weather']}")
             log.info(
-                f"  Channel   : loss={r['loss_pct']}  "
+                f"[STATUS] Channel   : loss={r['loss_pct']}  "
                 f"total={r['msgs_total']}  fwd={r['msgs_fwd']}"
             )
             for relay in self.relays:
-                log.info(f"  [{relay.name:10s}] {relay.status()}")
+                log.info(f"[STATUS] {relay.name:10s} {relay.status()}")
             log.info("─" * 56)
 
 
@@ -383,13 +383,13 @@ def main():
         ).start()
 
     log.info("=" * 56)
-    log.info("  LEO Satellite relay node started  (UDP only)")
-    log.info(f"  Uplink from station : {sat_host}:{sat_ports['uplink_from_station']}")
-    log.info(f"  Uplink from turbine : {sat_host}:{sat_ports['uplink_from_turbine']}")
-    log.info(f"  → Turbine           : {turb_host}:70xx")
-    log.info(f"  → Station           : {sta_host}:{sta_ports['data_receiver']}")
-    log.info(f"  Orbital period      : {ch_cfg['orbital_period_s']}s")
-    log.info(f"  Visibility window   : {ch_cfg['visibility_window_s']}s")
+    log.info("[WTSP] LEO Satellite relay started (UDP only)")
+    log.info(f"[NET ] Uplink from station : {sat_host}:{sat_ports['uplink_from_station']}")
+    log.info(f"[NET ] Uplink from turbine : {sat_host}:{sat_ports['uplink_from_turbine']}")
+    log.info(f"[NET ] → Turbine           : {turb_host}:70xx")
+    log.info(f"[NET ] → Station           : {sta_host}:{sta_ports['data_receiver']}")
+    log.info(f"[CHAN] Orbital period      : {ch_cfg['orbital_period_s']}s")
+    log.info(f"[CHAN] Visibility window   : {ch_cfg['visibility_window_s']}s")
     log.info("=" * 56)
 
     try:
