@@ -189,7 +189,7 @@ class TurbineModel:
             cp    = 0.45
             rho   = 1.225
             area  = math.pi * self.ROTOR_RADIUS ** 2
-            pitch_factor = max(0.05, self._target_pitch / 90.0)
+            pitch_factor = max(0.05, self._target_pitch / 45.0)
             self.power_kw = min(
                 self.RATED_POWER,
                 0.5 * cp * rho * area * self.wind_ms**3 / 1000.0 * pitch_factor
@@ -214,9 +214,10 @@ class TurbineModel:
         # Yaw: 1°/s
         diff = (self._target_yaw - self.yaw_deg + 540) % 360 - 180
         self.yaw_deg = (self.yaw_deg + max(-1.0, min(1.0, diff))) % 360
+        self.yaw_deg = max(0.0, min(90.0, self.yaw_deg))
         # Pitch: 2°/s
         diff = self._target_pitch - self.pitch_deg
-        self.pitch_deg = max(0.0, min(90.0,
+        self.pitch_deg = max(0.0, min(45.0,
                                       self.pitch_deg + max(-2.0, min(2.0, diff))))
 
     def _step_faults(self):
@@ -253,7 +254,7 @@ class TurbineModel:
 
     # ── Public command API ────────────────────
     def cmd_yaw(self, degrees: float) -> str:
-        self._target_yaw = float(degrees) % 360
+        self._target_yaw = max(0.0, min(90.0, float(degrees)))
         log.info(f"[CTRL] Yaw target → {self._target_yaw:.1f}°")
         return f"Yaw target set to {self._target_yaw:.1f}°"
 
@@ -261,7 +262,7 @@ class TurbineModel:
         with self._lock:
             if self.state == self.State.FAULT:
                 return "REJECTED: turbine in FAULT state"
-        self._target_pitch = max(0.0, min(90.0, float(degrees)))
+        self._target_pitch = max(0.0, min(45.0, float(degrees)))
         log.info(f"[CTRL] Pitch target → {self._target_pitch:.1f}°")
         return f"Pitch target set to {self._target_pitch:.1f}°"
 
@@ -351,7 +352,7 @@ class YawService:
             nack = make_nack(msg, NodeID.TURBINE, "invalid yaw value")
             self.rudp.send_unreliable(nack, addr)
             return
-        if abs(val) > 720:
+        if val < 0 or val > 90:
             security.record_event(addr, "RANGE", "Yaw value out of safe range")
             nack = make_nack(msg, NodeID.TURBINE, "yaw out of range")
             self.rudp.send_unreliable(nack, addr)
@@ -418,7 +419,7 @@ class PitchService:
                 nack = make_nack(msg, NodeID.TURBINE, "invalid pitch value")
                 self.rudp.send_unreliable(nack, addr)
                 return
-            if val < 0 or val > 90:
+            if val < 0 or val > 45:
                 security.record_event(addr, "RANGE", "Pitch value out of safe range")
                 nack = make_nack(msg, NodeID.TURBINE, "pitch out of range")
                 self.rudp.send_unreliable(nack, addr)
@@ -565,8 +566,8 @@ class TelemetryService:
                     },
                     "constraints": {
                         "max_wind_cut_out_ms": 25.0,
-                        "pitch_range_deg":     [0.0, 90.0],
-                        "yaw_range_deg":       [0.0, 360.0],
+                        "pitch_range_deg":     [0.0, 45.0],
+                        "yaw_range_deg":       [0.0, 90.0],
                     }
                 }
             )
