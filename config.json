@@ -2,7 +2,7 @@
   "_comment": "BEFORE deploying to 3 machines, replace 127.0.0.1 with the real IPs.",
 
   "turbine": {
-    "host": "10.6.134.140",
+    "host": "127.0.0.1",
     "ports": {
       "yaw_control":    7001,
       "pitch_control":  7002,
@@ -13,7 +13,7 @@
   },
 
   "satellite": {
-    "host": "10.6.69.223",
+    "host": "127.0.0.1",
     "ports": {
       "uplink_from_station": 8001,
       "uplink_from_turbine": 8002
@@ -21,7 +21,7 @@
   },
 
   "station": {
-    "host": "10.6.66.65",
+    "host": "127.0.0.1",
     "ports": {
       "data_receiver": 9001
     }
